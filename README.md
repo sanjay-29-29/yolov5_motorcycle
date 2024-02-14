@@ -6,7 +6,7 @@ Make sure you have Python installed on your system. Then, run the following comm
 pip install -r requirements.txt
 ```
 
-Download the model from [this link](https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5l.pt) and paste it into the repository folder.
+Download the model from [this link](https://drive.google.com/file/d/1LPn2XUDiY3Mtbo78BVJxQX0TbHr78a-2/view?usp=sharing) and paste it into the repository folder.
 
 ### 2. Running Inference
 
