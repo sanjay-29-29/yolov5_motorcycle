@@ -1,56 +1,19 @@
 import cv2
 import torch
-import easyocr
-from tflite_runtime.interpreter import Interpreter
+import torchvision.models as models
+from helmet_model import binary_classifier
 import numpy as np
 from flask import Flask, Response
 
 app = Flask(__name__)
 
-reader = easyocr.Reader(['en'])
+model = torch.hub.load('', 'custom', path='best.pt', source='local')
 
-model = torch.hub.load('', 'custom', path='best.pt', source='local') #change it according to file location
+helmet_model =binary_classifier.BinaryClassifier()
+
+helmet_model.load_state_dict(torch.load('helmet_model.pth'))
 
 video_path = "VID_20240213_175219.mp4"
-
-class_to_detect = [2,3]
-
-tflite_model_path = 'detect.tflite'
-interpreter = Interpreter(model_path=tflite_model_path)
-interpreter.allocate_tensors()
-input_details = interpreter.get_input_details()
-output_details = interpreter.get_output_details()
-height = input_details[0]['shape'][1]
-width = input_details[0]['shape'][2]
-
-def tflite(image, min_conf, input_details, output_details, imH, imW):
-    input_data = (np.float32(image) - 127.5) / 127.5
-    input_data = np.expand_dims(input_data, axis=0)
-    interpreter.set_tensor(input_details[0]['index'], input_data)
-    interpreter.invoke()
-    boxes = interpreter.get_tensor(output_details[1]['index'])[0] 
-    classes = interpreter.get_tensor(output_details[3]['index'])[0] 
-    scores = interpreter.get_tensor(output_details[0]['index'])[0]
-    
-    detected_text = []  
-    
-    for i in range(len(scores)):
-        if ((scores[i] > min_conf) and (scores[i] <= 1.0)):
-            ymin = int(max(1, (boxes[i][0] * imH)))
-            xmin = int(max(1, (boxes[i][1] * imW)))
-            ymax = int(min(imH, (boxes[i][2] * imH)))
-            xmax = int(min(imW, (boxes[i][3] * imW)))
-            cropped_img = image[ymin:ymax, xmin:xmax]  
-            gray_plate = cv2.cvtColor(cropped_img, cv2.COLOR_BGR2GRAY)
-            ocr_result = reader.readtext(gray_plate)
-                
-            for result in ocr_result:
-                text = result[1]
-                detected_text.append(text) 
-    
-    single_text = ' '.join(detected_text)
-    return single_text
-
 
 def stream():
 
@@ -88,13 +51,26 @@ def stream():
 
             if(class_name == 'motorcycle'):
                 cropped_img = frame[int(ymin):int(ymax), int(xmin):int(xmax)]
-                cv2.imwrite("motorcycle_frame.jpg", cropped_img) #(saving motorcycle class)
+                cropped_img = cv2.resize(cropped_img, (64, 64))  
+                cropped_img = torch.from_numpy(cropped_img).permute(2, 0, 1).unsqueeze(0).float() 
 
-            cropped_img = cv2.resize(frame_rgb[int(ymin):int(ymax), int(xmin):int(xmax)], (width, height))
-            label += f" | Plate:"
-            cv2.putText(frame, label,(int(xmin), int(ymin) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-            print("Confidence:", confidence)
-        
+                with torch.no_grad():
+                    output = helmet_model(cropped_img)
+                    helmet_present = output.item() > 0.5
+
+                    if helmet_present:
+                        helmet_text = "Helmet: False"
+                    else:
+                        helmet_text = "Helmet: True"
+
+                
+                cv2.putText(frame, helmet_text, (int(xmin), int(ymin) - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                print("Confidence:", confidence)
+            else:
+                label += f""
+                cv2.putText(frame, label,(int(xmin), int(ymin) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                print("Confidence:", confidence)
+            
         overlay = frame.copy()
         cv2.rectangle(overlay, (xmin_roi, ymin_roi), (xmax_roi, ymax_roi), (0, 255, 0), -1)  
         alpha = 0.3  
