@@ -3,14 +3,15 @@ import torch
 import easyocr
 from tflite_runtime.interpreter import Interpreter
 import numpy as np
+from flask import Flask, Response
+
+app = Flask(__name__)
 
 reader = easyocr.Reader(['en'])
 
-model = torch.hub.load('', 'custom', path='last.pt', source='local') #change it according to file location
+model = torch.hub.load('', 'custom', path='best.pt', source='local') #change it according to file location
 
-video_path = "video.mp4"
-
-cap = cv2.VideoCapture(video_path)
+video_path = "VID_20240213_175219.mp4"
 
 class_to_detect = [2,3]
 
@@ -51,32 +52,37 @@ def tflite(image, min_conf, input_details, output_details, imH, imW):
     return single_text
 
 
-if not cap.isOpened():
-    print("Error: Unable to open the video file.")
-    exit()
+def stream():
+
+    cap = cv2.VideoCapture(video_path)
 
 
-xmin_roi, ymin_roi, xmax_roi, ymax_roi = 43, 347, 1245, 704 
+    if not cap.isOpened():
+        print("Error: Unable to open the video file.")
+        exit()
 
-fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-out = cv2.VideoWriter('output_video.mp4', fourcc, 20.0, (int(cap.get(3)), int(cap.get(4)))) #(saving the video as .mp4)
 
-while cap.isOpened():
-    ret, frame = cap.read()
+    xmin_roi, ymin_roi, xmax_roi, ymax_roi = 43, 347, 1245, 704 
 
-    if not ret:
-        break
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter('output_video.mp4', fourcc, 20.0, (int(cap.get(3)), int(cap.get(4)))) #(saving the video as .mp4)
 
-    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    while cap.isOpened():
+        ret, frame = cap.read()
 
-    results = model(frame_rgb)
+        if not ret:
+            break
 
-    for detection in results.xyxy[0]:
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        xmin, ymin, xmax, ymax, confidence, class_id = map(float, detection[:6])
-        class_name = model.names[int(class_id)]
+        results = model(frame_rgb)
 
-        if xmin_roi <= xmin <= xmax_roi and ymin_roi <= ymin <= ymax_roi:
+        for detection in results.xyxy[0]:
+
+            xmin, ymin, xmax, ymax, confidence, class_id = map(float, detection[:6])
+            class_name = model.names[int(class_id)]
+
+            #if xmin_roi <= xmin <= xmax_roi and ymin_roi <= ymin <= ymax_roi:
             label = f"{class_name} {confidence:.2f}"
             cv2.rectangle(frame, (int(xmin), int(ymin)), (int(xmax), int(ymax)), (0, 255, 0), 2)
 
@@ -88,15 +94,29 @@ while cap.isOpened():
             label += f" | Plate:"
             cv2.putText(frame, label,(int(xmin), int(ymin) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
             print("Confidence:", confidence)
-    
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (xmin_roi, ymin_roi), (xmax_roi, ymax_roi), (0, 255, 0), -1)  
-    alpha = 0.3  
-    cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
-    out.write(frame)
-    cv2.imshow("Frame", frame)
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+        
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (xmin_roi, ymin_roi), (xmax_roi, ymax_roi), (0, 255, 0), -1)  
+        alpha = 0.3  
+        cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+        out.write(frame)
 
-cap.release()
-cv2.destroyAllWindows()
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+        ret, buffer = cv2.imencode('.jpg', frame)
+
+        frame = buffer.tobytes()
+
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+@app.route('/webcam')
+def webcam_display():
+    return Response(stream(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+if __name__ == '__main__':
+    app.run(debug=True)
